@@ -1,2 +1,2 @@
-# qix
-QOI Idea eXpanded
+# **Q** I **X**
+QOI Idea eXtended

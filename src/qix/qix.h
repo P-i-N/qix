@@ -4,7 +4,7 @@
 #ifdef __cplusplus
 extern "C" {
 #else
-	#include <stdbool.h>
+#include <stdbool.h>
 #endif
 
 #define QIX_SRGB              0x00
@@ -24,24 +24,24 @@ typedef struct
 
 typedef struct
 {
-	void* ( *memory_alloc )( size_t );
-	void ( *memory_free )( void* );
-} qix_hooks_t;
-
-void* qix_encode( const void* data, const qix_desc* desc, int* out_len, const qix_hooks_t *hooks );
-
-void* qix_decode( const void* data, int size, qix_desc* desc, int channels, const qix_hooks_t *hooks );
-
-typedef struct
-{
 	size_t width;        // Width in pixels
 	size_t height;       // Height in pixels
 	size_t channels;     // Number of channels (must be 3 or 4)
-	size_t segment_size; // Segment size in pixels (0 = no segmentation)
 	size_t stride;       // Line stride in bytes (0 = width * channels)
+	size_t segment_size; // Segment size in pixels (0 = no segmentation)
 } image_t;
 
-unsigned int* qix_zigzag_columns( const void* data, const image_t* image );
+typedef unsigned int qix_rgba_t;
+
+void *qix_encode( const void *data, const qix_desc *desc, int *out_len );
+
+void *qix_decode( const void *data, int size, qix_desc *desc, int channels );
+
+size_t qix_encode_rgb( const qix_rgba_t *src, size_t numSrcPixels, unsigned char *dst );
+
+qix_rgba_t *qix_linear_to_zigzag_columns( const void *data, const image_t *image );
+
+qix_rgba_t *qix_zigzag_columns_to_linear( const void *data, const image_t *image );
 
 #ifdef __cplusplus
 }
@@ -111,7 +111,8 @@ typedef struct
 	int y, co, cg;
 } qix_rgb_yuv;
 
-void qix_write_32( unsigned char* bytes, size_t* p, unsigned int v )
+//---------------------------------------------------------------------------------------------------------------------
+void qix_write_32( unsigned char *bytes, size_t *p, unsigned int v )
 {
 	bytes[( *p )++] = ( 0xff000000 & v ) >> 24;
 	bytes[( *p )++] = ( 0x00ff0000 & v ) >> 16;
@@ -119,7 +120,8 @@ void qix_write_32( unsigned char* bytes, size_t* p, unsigned int v )
 	bytes[( *p )++] = ( 0x000000ff & v );
 }
 
-unsigned int qix_read_32( const unsigned char* bytes, size_t* p )
+//---------------------------------------------------------------------------------------------------------------------
+unsigned int qix_read_32( const unsigned char *bytes, size_t *p )
 {
 	unsigned int a = bytes[( *p )++];
 	unsigned int b = bytes[( *p )++];
@@ -128,7 +130,8 @@ unsigned int qix_read_32( const unsigned char* bytes, size_t* p )
 	return ( a << 24 ) | ( b << 16 ) | ( c << 8 ) | d;
 }
 
-void qix_rgb2yuv( qix_rgb_yuv* pix )
+//---------------------------------------------------------------------------------------------------------------------
+void qix_rgb2yuv( qix_rgb_yuv *pix )
 {
 	pix->co = pix->r - pix->b;
 	int tmp = pix->b + pix->co / 2;
@@ -136,7 +139,8 @@ void qix_rgb2yuv( qix_rgb_yuv* pix )
 	pix->y = tmp + pix->cg / 2;
 }
 
-void qix_yuv2rgb( qix_rgb_yuv* pix )
+//---------------------------------------------------------------------------------------------------------------------
+void qix_yuv2rgb( qix_rgb_yuv *pix )
 {
 	int tmp = pix->y - pix->cg / 2;
 	pix->g = pix->cg + tmp;
@@ -145,23 +149,23 @@ void qix_yuv2rgb( qix_rgb_yuv* pix )
 }
 
 //---------------------------------------------------------------------------------------------------------------------
-unsigned int* qix_zigzag_columns( const void* data, const image_t* image )
+qix_rgba_t *qix_linear_to_zigzag_columns( const void *data, const image_t *image )
 {
-	unsigned int* result = ( unsigned int* )malloc( image->width * image->height * 4 );
+	qix_rgba_t *result = ( qix_rgba_t * )malloc( image->width * image->height * 4 );
 	size_t stride = image->stride ? image->stride : ( image->width * image->channels );
 
 	if ( result && image->channels == 4 )
 	{
-		unsigned int* dst = result;
+		qix_rgba_t *dst = result;
 
 		for ( size_t s = 0, S = ( image->width + image->segment_size - 1 ) / image->segment_size; s < S; ++s )
 		{
-			const unsigned int* src = ( const unsigned int* )data + s * image->segment_size;
+			const qix_rgba_t *src = ( const qix_rgba_t * )data + s * image->segment_size;
 			size_t sizeX = ( s < ( S - 1 ) ) ? image->segment_size : ( image->width - ( S - 1 ) * image->segment_size );
 
 			for ( size_t y = 0, SY = image->height; y < SY; ++y )
 			{
-				_mm_prefetch( ( const char* )src + stride, _MM_HINT_T0 );
+				_mm_prefetch( ( const char * )src + stride, _MM_HINT_T0 );
 
 				if ( y & 1 )
 				{
@@ -183,7 +187,7 @@ unsigned int* qix_zigzag_columns( const void* data, const image_t* image )
 }
 
 //---------------------------------------------------------------------------------------------------------------------
-size_t qix_encode_rgb( const unsigned int* src, size_t numSrcPixels, unsigned char* dst )
+size_t qix_encode_rgb( const qix_rgba_t *src, size_t numSrcPixels, unsigned char *dst )
 {
 	if ( !src || !numSrcPixels || !dst )
 		return 0;
@@ -195,7 +199,7 @@ size_t qix_encode_rgb( const unsigned int* src, size_t numSrcPixels, unsigned ch
 	qix_rgb_yuv px = { 0 };
 	qix_rgb_yuv pxPrev = { 0 };
 
-	unsigned char* bytes = ( unsigned char* )dst;
+	unsigned char *bytes = ( unsigned char * )dst;
 
 	static int column = 0;
 	++column;
@@ -222,14 +226,15 @@ size_t qix_encode_rgb( const unsigned int* src, size_t numSrcPixels, unsigned ch
 
 		if ( flushRun )
 		{
-			unsigned char* start = bytes;
+			unsigned char *start = bytes;
 			--run;
 
 			do
 			{
 				*bytes++ = QIX_RUN_8 | ( run & 0x1f );
 				run >>= 5;
-			} while ( run > 0 );
+			}
+			while ( run > 0 );
 
 			// Swap to make big endian
 			size_t len = ( bytes - start ) >> 1;
@@ -342,10 +347,10 @@ size_t qix_encode_rgb( const unsigned int* src, size_t numSrcPixels, unsigned ch
 }
 
 //---------------------------------------------------------------------------------------------------------------------
-void* qix_encode( const void* data, const qix_desc* desc, int* out_len )
+void *qix_encode( const void *data, const qix_desc *desc, int *out_len )
 {
 	if ( data == NULL || out_len == NULL || desc == NULL || desc->width == 0 || desc->height == 0 || desc->channels < 3 ||
-	     desc->channels > 4 || ( desc->colorspace & 0xf0 ) != 0 )
+	        desc->channels > 4 || ( desc->colorspace & 0xf0 ) != 0 )
 	{
 		return NULL;
 	}
@@ -353,7 +358,7 @@ void* qix_encode( const void* data, const qix_desc* desc, int* out_len )
 	int max_size = desc->width * desc->height * ( desc->channels + 1 ) + QIX_HEADER_SIZE + QIX_PADDING;
 
 	size_t p = 0;
-	unsigned char* bytes = QIX_MALLOC( max_size );
+	unsigned char *bytes = QIX_MALLOC( max_size );
 	if ( !bytes )
 	{
 		return NULL;
@@ -372,12 +377,12 @@ void* qix_encode( const void* data, const qix_desc* desc, int* out_len )
 	img.channels = desc->channels;
 	img.segment_size = QIX_SEGMENT_SIZE;
 
-	unsigned int* zigzagData = ( unsigned int* )data;
-	zigzagData = qix_zigzag_columns( data, &img );
+	qix_rgba_t *zigzagData = ( qix_rgba_t * )data;
+	zigzagData = qix_linear_to_zigzag_columns( data, &img );
 
 	for ( size_t s = 0, S = ( img.width + img.segment_size - 1 ) / img.segment_size; s < S; ++s )
 	{
-		const unsigned int* src = zigzagData + s * img.segment_size * img.height;
+		const unsigned int *src = zigzagData + s * img.segment_size * img.height;
 		size_t sizeX = ( s < ( S - 1 ) ) ? img.segment_size : ( img.width - ( S - 1 ) * img.segment_size );
 
 		p += qix_encode_rgb( src, sizeX * img.height, bytes + p );
@@ -394,15 +399,15 @@ void* qix_encode( const void* data, const qix_desc* desc, int* out_len )
 }
 
 //---------------------------------------------------------------------------------------------------------------------
-void* qix_decode( const void* data, int size, qix_desc* desc, int channels )
+void *qix_decode( const void *data, int size, qix_desc *desc, int channels )
 {
 	if ( data == NULL || desc == NULL || ( channels != 0 && channels != 3 && channels != 4 ) ||
-	     size < QIX_HEADER_SIZE + QIX_PADDING )
+	        size < QIX_HEADER_SIZE + QIX_PADDING )
 	{
 		return NULL;
 	}
 
-	const unsigned char* bytes = ( const unsigned char* )data;
+	const unsigned char *bytes = ( const unsigned char * )data;
 	size_t p = 0;
 
 	unsigned int header_magic = qix_read_32( bytes, &p );
@@ -422,7 +427,7 @@ void* qix_decode( const void* data, int size, qix_desc* desc, int channels )
 	}
 
 	int px_len = desc->width * desc->height * channels;
-	unsigned char* pixels = QIX_MALLOC( px_len );
+	unsigned char *pixels = QIX_MALLOC( px_len );
 	if ( !pixels )
 	{
 		return NULL;
@@ -451,7 +456,7 @@ void* qix_decode( const void* data, int size, qix_desc* desc, int channels )
 		px.y = px.co = px.cg = 0;
 
 		int px_chunk_pos = chunk_x * QIX_SEGMENT_SIZE;
-		unsigned char* px_ptr = pixels + px_chunk_pos * channels;
+		unsigned char *px_ptr = pixels + px_chunk_pos * channels;
 
 		for ( int y = 0, inc = channels, SY = desc->height; y < SY; y++, px_chunk_pos += desc->width, inc *= -1 )
 		{
